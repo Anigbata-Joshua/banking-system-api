@@ -1,0 +1,40 @@
+import express from 'express';
+import helmet from 'helmet';
+import cors from 'cors';
+import rateLimit from 'express-rate-limit';
+import { env } from './config/env.js';
+import { errorHandler } from './middleware/errorHandler.js';
+
+const app = express();
+
+app.use(helmet());
+app.use(cors());
+app.use(express.json());
+
+const globalLimiter = rateLimit({
+    windowMs: env.rateLimit,
+    max: env.rateLimitMax,
+    handler: (req, res, next, options) => {
+        res.status(options.statusCode).json({
+            success: false,
+            message: options.message || 'Too many requests, please try again later',
+        });
+    },
+});
+app.use('/api', globalLimiter);
+
+// Not yet mounted — waiting on auth.routes.js
+const authLimiter = rateLimit({
+    windowMs: 900000,
+    max: 20,
+    handler: (req, res, next, options) => {
+        res.status(options.statusCode).json({
+            success: false,
+            message: 'Too many authentication attempts, please try again later',
+        });
+    },
+});
+
+app.use(errorHandler);
+
+export default app;
