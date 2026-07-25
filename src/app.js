@@ -5,6 +5,7 @@ import rateLimit from 'express-rate-limit';
 import { env } from './config/env.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import  authRoutes from './routes/auth.routes.js';
+import accountRoutes from './routes/account.routes.js';
 
 
 const app = express();
@@ -23,7 +24,10 @@ const globalLimiter = rateLimit({
         });
     },
 });
+
+//Routes
 app.use('/api', globalLimiter);
+app.use('/api/accounts', accountRoutes);
 
 // Not yet mounted — waiting on auth.routes.js
 const authLimiter = rateLimit({
