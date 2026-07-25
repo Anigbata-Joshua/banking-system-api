@@ -4,6 +4,8 @@ import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import { env } from './config/env.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import  authRoutes from './routes/auth.routes.js';
+
 
 const app = express();
 
@@ -34,6 +36,9 @@ const authLimiter = rateLimit({
         });
     },
 });
+
+// Routes
+app.use('/api/auth', authRoutes);
 
 app.use(errorHandler);
 
