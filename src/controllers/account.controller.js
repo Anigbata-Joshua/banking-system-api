@@ -44,10 +44,10 @@ export const getAccountByNumber = catchAsync(async (req, res) => {
 
 export const getMyAccounts = catchAsync(async (req, res) => {
     const { customerId } = req.user;
-    
+
     // Fetch accounts belonging to the authenticated customer
     const myAccounts = await Account.find({ customerId });
-    
+
     const totalAccounts = myAccounts.length;
 
     res.status(200).json({
@@ -201,6 +201,42 @@ export const depositInAccount = catchAsync(async (req, res) => {
     res.status(201).json({
         success: true,
         message: 'Deposit successful',
+        data: result,
+    });
+});
+
+export const withdrawFromAccount = catchAsync(async (req, res) => {
+    const { amount, description } = req.body;
+    const { accountNumber } = req.params;
+    const idempotencyKey = req.headers['idempotency-key'];
+    const initiatedBy = req.user.userId;
+
+    const existingAccount = await Account.findOne({ accountNumber });
+    if (!existingAccount) {
+        return res.status(404).json({
+            success: false,
+            message: 'Account not found',
+        });
+    }
+
+    if (req.user.role === 'customer' && existingAccount.customerId.toString() !== req.user.customerId) {
+        return res.status(403).json({
+            success: false,
+            message: 'You do not have permission to withdraw from this account',
+        });
+    }
+
+    const result = await ledgerService.withdraw({
+        accountNumber,
+        amount,
+        initiatedBy,
+        idempotencyKey,
+        description,
+    });
+
+    res.status(201).json({
+        success: true,
+        message: 'Withdrawal successful',
         data: result,
     });
 });
