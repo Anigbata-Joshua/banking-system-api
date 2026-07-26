@@ -2,6 +2,8 @@ import Account from '../models/account.model.js';
 import * as accountService from '../services/account.service.js';
 import catchAsync from '../utils/catchAsync.js';
 import BigNumber from 'bignumber.js';
+import * as ledgerService from '../services/ledger.service.js';
+
 
 export const openAccount = catchAsync(async (req, res) => {
     const { type, overdraftLimit } = req.body;
@@ -42,9 +44,19 @@ export const getAccountByNumber = catchAsync(async (req, res) => {
 
 export const getMyAccounts = catchAsync(async (req, res) => {
     const { customerId } = req.user;
+    
+    // Fetch accounts belonging to the authenticated customer
     const myAccounts = await Account.find({ customerId });
+    
+    const totalAccounts = myAccounts.length;
 
-    res.status(200).json({ success: true, data: myAccounts });
+    res.status(200).json({
+        status: 'success',
+        results: totalAccounts,
+        data: {
+            accounts: myAccounts,
+        },
+    });
 });
 
 export const freezeAccount = catchAsync(async (req, res) => {
@@ -120,8 +132,6 @@ export const unfreezeAccount = catchAsync(async (req, res) => {
     });
 });
 
-
-
 export const deleteAccount = catchAsync(async (req, res) => {
     const { accountNumber } = req.params;
     const account = await Account.findOne({ accountNumber });
@@ -156,5 +166,41 @@ export const deleteAccount = catchAsync(async (req, res) => {
         success: true,
         message: 'Account closed successfully',
         data: account,
+    });
+});
+
+export const depositInAccount = catchAsync(async (req, res) => {
+    const { amount, description } = req.body;
+    const { accountNumber } = req.params;
+    const idempotencyKey = req.headers['idempotency-key'];
+    const initiatedBy = req.user.userId;
+
+    const existingAccount = await Account.findOne({ accountNumber });
+    if (!existingAccount) {
+        return res.status(404).json({
+            success: false,
+            message: 'Account not found',
+        });
+    }
+
+    if (req.user.role === 'customer' && existingAccount.customerId.toString() !== req.user.customerId) {
+        return res.status(403).json({
+            success: false,
+            message: 'You do not have permission to deposit into this account',
+        });
+    }
+
+    const result = await ledgerService.deposit({
+        accountNumber,
+        amount,
+        initiatedBy,
+        idempotencyKey,
+        description,
+    });
+
+    res.status(201).json({
+        success: true,
+        message: 'Deposit successful',
+        data: result,
     });
 });
