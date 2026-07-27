@@ -3,6 +3,8 @@ import * as accountController from '../controllers/account.controller.js';
 import * as ledgerController from '../controllers/ledger.controller.js';
 import { authenticate, authorize } from '../middleware/auth.js';
 import { enforceIdempotency } from '../middleware/idempotency.js';
+import * as statementController from '../controllers/statement.controller.js';
+
 
 const router = Router();
 
@@ -15,5 +17,7 @@ router.delete('/:accountNumber', authenticate, authorize('manager', 'admin'), ac
 router.post('/:accountNumber/deposit', authenticate, enforceIdempotency, ledgerController.depositInAccount);
 router.post('/:accountNumber/withdraw', authenticate, enforceIdempotency, ledgerController.withdrawFromAccount);
 router.post('/:accountNumber/transfer', authenticate, enforceIdempotency, ledgerController.transferFunds);
+// Account Statement
+router.get('/:accountNumber/statement', authenticate, statementController.getStatement);
 
 export default router;
