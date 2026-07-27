@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import Account from '../models/account.model.js';
 import Transaction from '../models/transaction.model.js';
 import Transfer from '../models/transfer.model.js';
+import Loan from '../models/loan.model.js';
 
 const MAX_RETRIES = 15;
 
@@ -258,6 +259,73 @@ export async function transfer({ fromAccountNumber, toAccountNumber, amount, ini
 
             await randomJitter();
 
+        } finally {
+            session.endSession();
+        }
+    }
+}
+
+export async function repayLoan({ loanId, amount, initiatedBy, idempotencyKey }) {
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        const session = await mongoose.startSession();
+        try {
+            session.startTransaction();
+
+            const loan = await Loan.findById(loanId).populate('disbursementAccountId').session(session);
+            if (!loan) throw new Error('Loan not found');
+            if (loan.status !== 'active') throw new Error(`Cannot repay a loan with status '${loan.status}'`);
+
+            const nextDueEntry = loan.repaymentSchedule.find((e) => e.status === 'pending');
+            if (!nextDueEntry) throw new Error('No pending repayments remain on this loan');
+
+            const account = await Account.findOne({ accountNumber: loan.disbursementAccountId.accountNumber }).session(session);
+            if (account.status !== 'active') throw new Error(`Cannot withdraw from a ${account.status} account`);
+
+            const currentBalance = new BigNumber(account.balance.toString());
+            const paymentAmount = new BigNumber(amount.toString());
+            const newBalance = currentBalance.minus(paymentAmount);
+
+            const overdraftLimit = new BigNumber(account.overdraftLimit.toString());
+            if (newBalance.isLessThan(overdraftLimit.negated())) throw new Error('Insufficient funds');
+
+            const updatedAccount = await Account.findOneAndUpdate(
+                { _id: account._id, version: account.version },
+                { $set: { balance: newBalance.toFixed(2) }, $inc: { version: 1 } },
+                { returnDocument: 'after', session }
+            );
+            if (!updatedAccount) throw new Error('VERSION_CONFLICT');
+
+            const transaction = await Transaction.create([{
+                transactionId: idempotencyKey,
+                account: updatedAccount._id,
+                type: 'loan_repayment',
+                amount,
+                balanceAfter: updatedAccount.balance,
+                status: 'completed',
+                description: `Loan repayment for loan ${loan._id}`,
+                initiatedBy,
+                idempotencyKey,
+            }], { session });
+
+            const outstanding = new BigNumber(loan.outstandingBalance.toString());
+            loan.outstandingBalance = outstanding.minus(paymentAmount).toFixed(2);
+            nextDueEntry.status = 'paid';
+            nextDueEntry.paidTransactionId = transaction[0]._id;
+            if (new BigNumber(loan.outstandingBalance.toString()).isLessThanOrEqualTo(0)) {
+                loan.status = 'closed';
+            }
+            await loan.save({ session });
+
+            await session.commitTransaction();
+            return { loan, account: updatedAccount, transaction: transaction[0] };
+
+        } catch (error) {
+            await session.abortTransaction();
+            if (!isRetryableError(error) || attempt === MAX_RETRIES - 1) {
+                if (error.message === 'VERSION_CONFLICT') throw new Error('Could not complete repayment — please retry');
+                throw error;
+            }
+            await randomJitter();
         } finally {
             session.endSession();
         }

@@ -6,6 +6,11 @@ import { env } from './config/env.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import  authRoutes from './routes/auth.routes.js';
 import accountRoutes from './routes/account.routes.js';
+import beneficiaryRoutes from './routes/beneficiary.routes.js';
+import cardRoutes from './routes/card.routes.js';
+import loanRoutes from './routes/loan.routes.js';
+
+
 
 
 const app = express();
@@ -28,6 +33,9 @@ const globalLimiter = rateLimit({
 //Routes
 app.use('/api', globalLimiter);
 app.use('/api/accounts', accountRoutes);
+app.use('/api/beneficiaries', beneficiaryRoutes);
+app.use('/api/cards', cardRoutes);
+app.use('/api/loans', loanRoutes);
 
 // Not yet mounted — waiting on auth.routes.js
 const authLimiter = rateLimit({
