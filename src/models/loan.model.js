@@ -4,7 +4,8 @@ const repaymentScheduleEntrySchema = new mongoose.Schema(
     {
         dueDate: { type: Date, required: true },
         amount: { type: mongoose.Schema.Types.Decimal128, required: true },
-        status: { type: String, enum: ['pending', 'paid', 'overdue'], default: 'pending' },
+        paidAmount: { type: mongoose.Schema.Types.Decimal128, required: true, default: () => mongoose.Types.Decimal128.fromString('0.00') },
+        status: { type: String, enum: ['pending', 'paid', 'overdue', 'partially_paid'], default: 'pending' },
         paidTransactionId: { type: mongoose.Schema.Types.ObjectId, ref: 'Transaction' },
     },
     { _id: false }

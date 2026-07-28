@@ -4,6 +4,7 @@ import catchAsync from '../utils/catchAsync.js';
 import * as ledgerService from '../services/ledger.service.js';
 import BigNumber from 'bignumber.js';
 import Transaction from '../models/transaction.model.js';
+import { logAction } from '../services/auditLog.service.js';
 
 export const applyForLoan = catchAsync(async (req, res) => {
     const { principal, interestRate, termMonths, disbursementAccountNumber } = req.body;
@@ -36,6 +37,29 @@ export const applyForLoan = catchAsync(async (req, res) => {
         });
     }
 
+    // Loan borrowing limit check based on transaction history (deposits/transfer_ins)
+    const customerAccounts = await Account.find({ customerId: req.user.customerId });
+    const customerAccountIds = customerAccounts.map(acc => acc._id);
+
+    const deposits = await Transaction.find({
+        account: { $in: customerAccountIds },
+        type: { $in: ['deposit', 'transfer_in'] },
+        status: 'completed',
+    });
+
+    let totalDeposits = new BigNumber(0);
+    for (const dep of deposits) {
+        totalDeposits = totalDeposits.plus(new BigNumber(dep.amount.toString()));
+    }
+
+    const principalVal = new BigNumber(principal);
+    if (totalDeposits.isZero() || principalVal.isGreaterThan(totalDeposits.times(2))) {
+        return res.status(400).json({
+            success: false,
+            message: `Loan eligibility check failed. Your borrowing limit is 2x your total deposits/transfers-in ($${totalDeposits.times(2).toFixed(2)}). You currently have total deposits of $${totalDeposits.toFixed(2)}.`,
+        });
+    }
+
     const loan = await Loan.create({
         customerId: req.user.customerId,
         disbursementAccountId: account._id,
@@ -44,6 +68,8 @@ export const applyForLoan = catchAsync(async (req, res) => {
         termMonths,
         status: 'pending',
     });
+
+    await logAction(req.user.userId, 'APPLY_LOAN', { loanId: loan._id, principal }, req.ip);
 
     res.status(201).json({ success: true, message: 'Loan request sent successfully', data: loan });
 });
@@ -109,6 +135,8 @@ export const approveLoan = catchAsync(async (req, res) => {
     loan.repaymentSchedule = repaymentSchedule;
     await loan.save();
 
+    await logAction(req.user.userId, 'APPROVE_LOAN', { loanId: loan._id, principal: loan.principal }, req.ip);
+
     res.status(200).json({
         success: true,
         message: 'Loan approved and disbursed',
@@ -139,6 +167,8 @@ export const rejectLoan = catchAsync(async (req, res) => {
     loan.approvedBy = req.user.userId;
     await loan.save();
 
+    await logAction(req.user.userId, 'REJECT_LOAN', { loanId: loan._id }, req.ip);
+
     res.status(200).json({ success: true, message: 'Loan rejected', data: loan });
 });
 
@@ -166,6 +196,8 @@ export const repayLoan = catchAsync(async (req, res) => {
         initiatedBy: req.user.userId,
         idempotencyKey,
     });
+
+    await logAction(req.user.userId, 'REPAY_LOAN', { loanId: id, amount }, req.ip);
 
     res.status(200).json({ success: true, message: 'Repayment successful', data: result });
 });

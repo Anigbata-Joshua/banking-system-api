@@ -13,6 +13,16 @@ function isRetryableError(error) {
         error.errorLabels?.includes('TransientTransactionError') ||
         error.codeName === 'WriteConflict'
     );
+};
+
+function parsePositiveAmount(amount, label = 'Amount') {
+    const value = new BigNumber(amount);
+    if (!value.isFinite() || value.isLessThanOrEqualTo(0)) {
+        const error = new Error(`${label} must be a positive number`);
+        error.statusCode = 400;
+        throw error;
+    }
+    return value;
 }
 
 function randomJitter() {
@@ -32,9 +42,9 @@ export async function deposit({ accountNumber, amount, initiatedBy, idempotencyK
             if (account.status !== 'active') {
                 throw new Error(`Cannot deposit into a ${account.status} account`);
             }
- 
+
             const currentBalance = new BigNumber(account.balance.toString());
-            const depositAmount = new BigNumber(amount.toString());
+            const depositAmount = parsePositiveAmount(amount, 'Deposit amount');
             const newBalance = currentBalance.plus(depositAmount);
 
             const updatedAccount = await Account.findOneAndUpdate(
@@ -95,7 +105,7 @@ export async function withdraw({ accountNumber, amount, initiatedBy, idempotency
             }
 
             const currentBalance = new BigNumber(account.balance.toString());
-            const withdrawalAmount = new BigNumber(amount.toString());
+            const withdrawalAmount = parsePositiveAmount(amount, 'Withdrawal amount');
             const newBalance = currentBalance.minus(withdrawalAmount);
 
             const overdraftLimit = new BigNumber(account.overdraftLimit.toString());
@@ -156,7 +166,7 @@ export async function transfer({ fromAccountNumber, toAccountNumber, amount, ini
         try {
             session.startTransaction();
 
-            const transferAmount = new BigNumber(amount.toString());
+            const transferAmount = parsePositiveAmount(amount, 'Transfer amount');
 
             async function applyBalanceChange(accountNumber) {
                 const isDebit = accountNumber === fromAccountNumber;
@@ -275,14 +285,20 @@ export async function repayLoan({ loanId, amount, initiatedBy, idempotencyKey })
             if (!loan) throw new Error('Loan not found');
             if (loan.status !== 'active') throw new Error(`Cannot repay a loan with status '${loan.status}'`);
 
-            const nextDueEntry = loan.repaymentSchedule.find((e) => e.status === 'pending');
-            if (!nextDueEntry) throw new Error('No pending repayments remain on this loan');
+            const unpaidEntries = loan.repaymentSchedule.filter((e) => e.status === 'pending' || e.status === 'partially_paid');
+            if (unpaidEntries.length === 0) throw new Error('No pending or partially paid repayments remain on this loan');
+
+            const outstanding = new BigNumber(loan.outstandingBalance.toString());
+            const paymentAmount = parsePositiveAmount(amount, 'Repayment amount');
+
+            if (paymentAmount.isGreaterThan(outstanding)) {
+                throw new Error(`Repayment amount $${paymentAmount.toFixed(2)} exceeds outstanding loan balance $${outstanding.toFixed(2)}`);
+            }
 
             const account = await Account.findOne({ accountNumber: loan.disbursementAccountId.accountNumber }).session(session);
             if (account.status !== 'active') throw new Error(`Cannot withdraw from a ${account.status} account`);
 
             const currentBalance = new BigNumber(account.balance.toString());
-            const paymentAmount = new BigNumber(amount.toString());
             const newBalance = currentBalance.minus(paymentAmount);
 
             const overdraftLimit = new BigNumber(account.overdraftLimit.toString());
@@ -307,11 +323,31 @@ export async function repayLoan({ loanId, amount, initiatedBy, idempotencyKey })
                 idempotencyKey,
             }], { session });
 
-            const outstanding = new BigNumber(loan.outstandingBalance.toString());
-            loan.outstandingBalance = outstanding.minus(paymentAmount).toFixed(2);
-            nextDueEntry.status = 'paid';
-            nextDueEntry.paidTransactionId = transaction[0]._id;
-            if (new BigNumber(loan.outstandingBalance.toString()).isLessThanOrEqualTo(0)) {
+            // Apply repayment sequentially to schedule
+            let remainingPayment = new BigNumber(paymentAmount);
+            for (const entry of unpaidEntries) {
+                if (remainingPayment.isLessThanOrEqualTo(0)) break;
+
+                const scheduled = new BigNumber(entry.amount.toString());
+                const alreadyPaid = new BigNumber(entry.paidAmount ? entry.paidAmount.toString() : '0.00');
+                const needed = scheduled.minus(alreadyPaid);
+
+                if (remainingPayment.isGreaterThanOrEqualTo(needed)) {
+                    entry.paidAmount = mongoose.Types.Decimal128.fromString(scheduled.toFixed(2));
+                    entry.status = 'paid';
+                    entry.paidTransactionId = transaction[0]._id;
+                    remainingPayment = remainingPayment.minus(needed);
+                } else {
+                    const newPaid = alreadyPaid.plus(remainingPayment);
+                    entry.paidAmount = mongoose.Types.Decimal128.fromString(newPaid.toFixed(2));
+                    entry.status = 'partially_paid';
+                    entry.paidTransactionId = transaction[0]._id;
+                    remainingPayment = new BigNumber(0);
+                }
+            }
+
+            loan.outstandingBalance = mongoose.Types.Decimal128.fromString(outstanding.minus(paymentAmount).toFixed(2));
+            if (outstanding.minus(paymentAmount).isLessThanOrEqualTo(0)) {
                 loan.status = 'closed';
             }
             await loan.save({ session });

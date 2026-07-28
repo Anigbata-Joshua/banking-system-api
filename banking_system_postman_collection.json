@@ -1,0 +1,1131 @@
+{
+	"info": {
+		"_postman_id": "9b1bfa2b-d36c-4861-bc96-1c0ea5fb342b",
+		"name": "Banking Management System API",
+		"description": "Comprehensive API collection to test all endpoints including Authentication, Accounts, Transactions, Cards, Beneficiaries, Loans, File Uploads, Reports, and Audit Logs.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Authentication",
+			"item": [
+				{
+					"name": "Register Customer",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"name\": \"John Doe\",\n    \"email\": \"john@example.com\",\n    \"password\": \"Password123!\",\n    \"phone\": \"08012345678\",\n    \"dateOfBirth\": \"1990-01-01\",\n    \"address\": {\n        \"street\": \"123 Bank Road\",\n        \"city\": \"Lagos\",\n        \"state\": \"Lagos\",\n        \"zipCode\": \"100001\",\n        \"country\": \"Nigeria\"\n    },\n    \"nationalId\": \"NID-888999\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/auth/register",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"register"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Login User",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"const responseJson = pm.response.json();",
+									"if (responseJson && responseJson.data && responseJson.data.accessToken) {",
+									"    pm.environment.set(\"accessToken\", responseJson.data.accessToken);",
+									"}",
+									"if (responseJson && responseJson.data && responseJson.data.refreshToken) {",
+									"    pm.environment.set(\"refreshToken\", responseJson.data.refreshToken);",
+									"}"
+								],
+								"type": "javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"email\": \"john@example.com\",\n    \"password\": \"Password123!\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/auth/login",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"login"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Refresh Access Token",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"const responseJson = pm.response.json();",
+									"if (responseJson && responseJson.data && responseJson.data.accessToken) {",
+									"    pm.environment.set(\"accessToken\", responseJson.data.accessToken);",
+									"}"
+								],
+								"type": "javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"refreshToken\": \"{{refreshToken}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/auth/refresh",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"refresh"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Logout User",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{accessToken}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/auth/logout",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"logout"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "KYC Uploads",
+			"item": [
+				{
+					"name": "Upload KYC Document",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{accessToken}}",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{
+									"key": "document",
+									"type": "file",
+									"src": []
+								}
+							]
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/customers/kyc/upload",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"customers",
+								"kyc",
+								"upload"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Accounts",
+			"item": [
+				{
+					"name": "Open Savings Account",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{accessToken}}",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"type\": \"savings\",\n    \"overdraftLimit\": \"0.00\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/accounts",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"accounts"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Open Current Account",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{accessToken}}",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"type\": \"current\",\n    \"overdraftLimit\": \"500.00\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/accounts",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"accounts"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get My Accounts",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{accessToken}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/accounts",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"accounts"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Account Details",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{accessToken}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/accounts/:accountNumber",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"accounts",
+								":accountNumber"
+							],
+							"variable": [
+								{
+									"key": "accountNumber",
+									"value": "9999999999"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Freeze Account (Staff only)",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{accessToken}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/accounts/:accountNumber/freeze",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"accounts",
+								":accountNumber",
+								"freeze"
+							],
+							"variable": [
+								{
+									"key": "accountNumber",
+									"value": "9999999999"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Unfreeze Account (Staff only)",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{accessToken}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/accounts/:accountNumber/unfreeze",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"accounts",
+								":accountNumber",
+								"unfreeze"
+							],
+							"variable": [
+								{
+									"key": "accountNumber",
+									"value": "9999999999"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Delete/Close Account (Manager/Admin only)",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{accessToken}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/accounts/:accountNumber",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"accounts",
+								":accountNumber"
+							],
+							"variable": [
+								{
+									"key": "accountNumber",
+									"value": "9999999999"
+								}
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Transactions & Ledger",
+			"item": [
+				{
+					"name": "Deposit in Account",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{accessToken}}",
+								"type": "text"
+							},
+							{
+								"key": "Idempotency-Key",
+								"value": "deposit-key-101",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"amount\": \"1000.00\",\n    \"description\": \"Initial funding\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/accounts/:accountNumber/deposit",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"accounts",
+								":accountNumber",
+								"deposit"
+							],
+							"variable": [
+								{
+									"key": "accountNumber",
+									"value": "9999999999"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Withdraw from Account",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{accessToken}}",
+								"type": "text"
+							},
+							{
+								"key": "Idempotency-Key",
+								"value": "withdraw-key-101",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"amount\": \"200.00\",\n    \"description\": \"ATM withdrawal\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/accounts/:accountNumber/withdraw",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"accounts",
+								":accountNumber",
+								"withdraw"
+							],
+							"variable": [
+								{
+									"key": "accountNumber",
+									"value": "9999999999"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Transfer Funds",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{accessToken}}",
+								"type": "text"
+							},
+							{
+								"key": "Idempotency-Key",
+								"value": "transfer-key-101",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"toAccountNumber\": \"8888888888\",\n    \"amount\": \"150.00\",\n    \"note\": \"Birthday gift\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/accounts/:accountNumber/transfer",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"accounts",
+								":accountNumber",
+								"transfer"
+							],
+							"variable": [
+								{
+									"key": "accountNumber",
+									"value": "9999999999"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Paginated Transaction History",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{accessToken}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/accounts/:accountNumber/transactions?page=1&limit=10&type=deposit",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"accounts",
+								":accountNumber",
+								"transactions"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1"
+								},
+								{
+									"key": "limit",
+									"value": "10"
+								},
+								{
+									"key": "type",
+									"value": "deposit"
+								},
+								{
+									"key": "startDate",
+									"value": "2026-07-01",
+									"disabled": true
+								},
+								{
+									"key": "endDate",
+									"value": "2026-07-31",
+									"disabled": true
+								}
+							],
+							"variable": [
+								{
+									"key": "accountNumber",
+									"value": "9999999999"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Download PDF Statement",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{accessToken}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/accounts/:accountNumber/statement?startDate=2026-07-01&endDate=2026-07-31",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"accounts",
+								":accountNumber",
+								"statement"
+							],
+							"query": [
+								{
+									"key": "startDate",
+									"value": "2026-07-01"
+								},
+								{
+									"key": "endDate",
+									"value": "2026-07-31"
+								}
+							],
+							"variable": [
+								{
+									"key": "accountNumber",
+									"value": "9999999999"
+								}
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Cards",
+			"item": [
+				{
+					"name": "Issue Card",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{accessToken}}",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"accountId\": \"INSERT_ACCOUNT_MONGODB_ID\",\n    \"cardType\": \"debit\",\n    \"pin\": \"1234\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/cards",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"cards"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get My Cards",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{accessToken}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/cards",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"cards"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Block Card",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{accessToken}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/cards/:id/block",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"cards",
+								":id",
+								"block"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "INSERT_CARD_ID"
+								}
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Loans",
+			"item": [
+				{
+					"name": "Apply for Loan",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{accessToken}}",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"principal\": \"1000.00\",\n    \"interestRate\": \"0.10\",\n    \"termMonths\": 12,\n    \"disbursementAccountNumber\": \"9999999999\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/loans/apply",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"loans",
+								"apply"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Loans",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{accessToken}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/loans",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"loans"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Approve Loan (Manager/Admin only)",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{accessToken}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/loans/:id/approve",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"loans",
+								":id",
+								"approve"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "INSERT_LOAN_ID"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Reject Loan (Manager/Admin only)",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{accessToken}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/loans/:id/reject",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"loans",
+								":id",
+								"reject"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "INSERT_LOAN_ID"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Repay Loan Installment",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{accessToken}}",
+								"type": "text"
+							},
+							{
+								"key": "Idempotency-Key",
+								"value": "repay-loan-key-101",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"amount\": \"110.00\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/loans/:id/repay",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"loans",
+								":id",
+								"repay"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "INSERT_LOAN_ID"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Loan Transactions",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{accessToken}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/loans/:id/transactions",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"loans",
+								":id",
+								"transactions"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "INSERT_LOAN_ID"
+								}
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Beneficiaries",
+			"item": [
+				{
+					"name": "Add Beneficiary",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{accessToken}}",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"beneficiaryAccountNumber\": \"8888888888\",\n    \"beneficiaryName\": \"Alice Smith\",\n    \"nickname\": \"Alice\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/beneficiaries",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"beneficiaries"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Beneficiaries",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{accessToken}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/beneficiaries",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"beneficiaries"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Delete Beneficiary",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{accessToken}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/beneficiaries/:id",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"beneficiaries",
+								":id"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "INSERT_BENEFICIARY_ID"
+								}
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Reports & Auditing",
+			"item": [
+				{
+					"name": "Get Financial Report (Manager/Admin)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{accessToken}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/reports/financial",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"reports",
+								"financial"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Audit Logs (Staff only)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{accessToken}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/audit-logs?page=1&limit=10",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"audit-logs"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1"
+								},
+								{
+									"key": "limit",
+									"value": "10"
+								},
+								{
+									"key": "action",
+									"value": "DEPOSIT_SUCCESS",
+									"disabled": true
+								},
+								{
+									"key": "userId",
+									"value": "INSERT_USER_ID",
+									"disabled": true
+								}
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		}
+	],
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "http://localhost:6000",
+			"type": "string"
+		}
+	]
+}

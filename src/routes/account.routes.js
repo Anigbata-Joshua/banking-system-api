@@ -19,5 +19,6 @@ router.post('/:accountNumber/withdraw', authenticate, enforceIdempotency, ledger
 router.post('/:accountNumber/transfer', authenticate, enforceIdempotency, ledgerController.transferFunds);
 // Account Statement
 router.get('/:accountNumber/statement', authenticate, statementController.getStatement);
+router.get('/:accountNumber/transactions', authenticate, accountController.getTransactionHistory);
 
 export default router;

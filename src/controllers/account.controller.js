@@ -1,7 +1,9 @@
 import Account from '../models/account.model.js';
+import Transaction from '../models/transaction.model.js';
 import * as accountService from '../services/account.service.js';
 import catchAsync from '../utils/catchAsync.js';
 import BigNumber from 'bignumber.js';
+import { logAction } from '../services/auditLog.service.js';
 
 
 export const openAccount = catchAsync(async (req, res) => {
@@ -12,6 +14,8 @@ export const openAccount = catchAsync(async (req, res) => {
         type,
         overdraftLimit,
     });
+
+    await logAction(req.user.userId, 'CREATE_ACCOUNT', { accountNumber: account.accountNumber, type: account.type, customerId: account.customerId }, req.ip);
 
     res.status(201).json({ success: true, data: account });
 });
@@ -88,6 +92,8 @@ export const freezeAccount = catchAsync(async (req, res) => {
     account.status = 'frozen';
     await account.save();
 
+    await logAction(req.user.userId, 'FREEZE_ACCOUNT', { accountNumber: account.accountNumber }, req.ip);
+
     res.status(200).json({
         success: true,
         message: 'Account frozen successfully',
@@ -123,6 +129,8 @@ export const unfreezeAccount = catchAsync(async (req, res) => {
 
     account.status = 'active';
     await account.save();
+
+    await logAction(req.user.userId, 'UNFREEZE_ACCOUNT', { accountNumber: account.accountNumber }, req.ip);
 
     return res.status(200).json({
         success: true,
@@ -161,10 +169,77 @@ export const deleteAccount = catchAsync(async (req, res) => {
     account.closedAt = new Date();
     await account.save();
 
+    await logAction(req.user.userId, 'CLOSE_ACCOUNT', { accountNumber: account.accountNumber }, req.ip);
+
     return res.status(200).json({
         success: true,
         message: 'Account closed successfully',
         data: account,
+    });
+});
+
+export const getTransactionHistory = catchAsync(async (req, res) => {
+    const { accountNumber } = req.params;
+    const { type, startDate, endDate, minAmount, maxAmount, page = 1, limit = 10 } = req.query;
+
+    const account = await Account.findOne({ accountNumber });
+    if (!account) {
+        return res.status(404).json({ success: false, message: 'Account not found' });
+    }
+
+    if (req.user.role === 'customer' && account.customerId.toString() !== req.user.customerId) {
+        return res.status(403).json({ success: false, message: 'You do not have permission to access this account' });
+    }
+
+    const query = { account: account._id };
+
+    if (type) {
+        query.type = type;
+    }
+
+    if (startDate || endDate) {
+        query.createdAt = {};
+        if (startDate) {
+            const start = new Date(startDate);
+            if (!isNaN(start.valueOf())) query.createdAt.$gte = start;
+        }
+        if (endDate) {
+            const end = new Date(endDate);
+            if (!isNaN(end.valueOf())) query.createdAt.$lte = end;
+        }
+    }
+
+    if (minAmount || maxAmount) {
+        query.amount = {};
+        if (minAmount) {
+            query.amount.$gte = parseFloat(minAmount);
+        }
+        if (maxAmount) {
+            query.amount.$lte = parseFloat(maxAmount);
+        }
+    }
+
+    const pageNum = parseInt(page, 10) || 1;
+    const limitNum = Math.min(parseInt(limit, 10) || 10, 100);
+    const skip = (pageNum - 1) * limitNum;
+
+    const totalCount = await Transaction.countDocuments(query);
+    const totalPages = Math.ceil(totalCount / limitNum);
+
+    const transactions = await Transaction.find(query)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limitNum);
+
+    res.status(200).json({
+        success: true,
+        pagination: {
+            page: pageNum,
+            limit: limitNum,
+            totalPages,
+            totalCount,
+        },
+        data: transactions,
     });
 });
 

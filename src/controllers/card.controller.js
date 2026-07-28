@@ -2,6 +2,7 @@ import Card from '../models/card.model.js';
 import Account from '../models/account.model.js';
 import catchAsync from '../utils/catchAsync.js';
 import bcrypt from 'bcryptjs';
+import { logAction } from '../services/auditLog.service.js';
 
 export const issueCard = catchAsync(async (req, res) => {
     const { accountId, cardType, pin } = req.body;
@@ -34,6 +35,8 @@ export const issueCard = catchAsync(async (req, res) => {
         expiryDate,
         pinHash,
     });
+
+    await logAction(req.user.userId, 'ISSUE_CARD', { cardId: card._id, accountId, cardType }, req.ip);
 
     res.status(201).json({
         success: true,
@@ -73,6 +76,8 @@ export const blockCard = catchAsync(async (req, res) => {
 
     card.status = 'blocked';
     await card.save();
+
+    await logAction(req.user.userId, 'BLOCK_CARD', { cardId: card._id }, req.ip);
 
     res.status(200).json({ success: true, message: 'Card blocked successfully', data: card });
 });

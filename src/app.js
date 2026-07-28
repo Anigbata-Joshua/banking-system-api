@@ -9,6 +9,9 @@ import accountRoutes from './routes/account.routes.js';
 import beneficiaryRoutes from './routes/beneficiary.routes.js';
 import cardRoutes from './routes/card.routes.js';
 import loanRoutes from './routes/loan.routes.js';
+import auditLogRoutes from './routes/auditLog.routes.js';
+import reportRoutes from './routes/report.routes.js';
+import customerRoutes from './routes/customer.routes.js';
 
 
 
@@ -36,6 +39,10 @@ app.use('/api/accounts', accountRoutes);
 app.use('/api/beneficiaries', beneficiaryRoutes);
 app.use('/api/cards', cardRoutes);
 app.use('/api/loans', loanRoutes);
+app.use('/api/audit-logs', auditLogRoutes);
+app.use('/api/reports', reportRoutes);
+app.use('/api/customers', customerRoutes);
+app.use('/uploads', express.static(env.uploadPath || 'uploads/'));
 
 // Not yet mounted — waiting on auth.routes.js
 const authLimiter = rateLimit({
