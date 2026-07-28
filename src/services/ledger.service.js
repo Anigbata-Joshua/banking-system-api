@@ -32,7 +32,7 @@ export async function deposit({ accountNumber, amount, initiatedBy, idempotencyK
             if (account.status !== 'active') {
                 throw new Error(`Cannot deposit into a ${account.status} account`);
             }
-
+ 
             const currentBalance = new BigNumber(account.balance.toString());
             const depositAmount = new BigNumber(amount.toString());
             const newBalance = currentBalance.plus(depositAmount);
