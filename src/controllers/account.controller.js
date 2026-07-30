@@ -17,7 +17,7 @@ export const openAccount = catchAsync(async (req, res) => {
 
     await logAction(req.user.userId, 'CREATE_ACCOUNT', { accountNumber: account.accountNumber, type: account.type, customerId: account.customerId }, req.ip);
 
-    res.status(201).json({ success: true, data: account });
+    res.status(201).json({ success: true, message: 'Account Created Successfully', data: account });
 });
 
 export const getAccountByNumber = catchAsync(async (req, res) => {
@@ -33,7 +33,6 @@ export const getAccountByNumber = catchAsync(async (req, res) => {
     }
 
     // Staff (teller/manager/admin) can view any account.
-    // Customers can only view their own.
     if (req.user.role === 'customer' && account.customerId.toString() !== req.user.customerId) {
         return res.status(403).json({
             success: false,
@@ -45,6 +44,7 @@ export const getAccountByNumber = catchAsync(async (req, res) => {
 });
 
 
+// Customers can only view their own.
 export const getMyAccounts = catchAsync(async (req, res) => {
     const { customerId } = req.user;
 
@@ -219,9 +219,14 @@ export const getTransactionHistory = catchAsync(async (req, res) => {
         }
     }
 
-    const pageNum = parseInt(page, 10) || 1;
-    const limitNum = Math.min(parseInt(limit, 10) || 10, 100);
-    const skip = (pageNum - 1) * limitNum;
+// parseInt("-1", 10) is -1, which is truthy — the `|| 1` fallback only catches
+// NaN/0, not negative numbers. A negative page previously flowed straight into
+// skip = (pageNum - 1) * limitNum, producing a negative skip value that MongoDB's
+// driver rejects with its own raw error text, which then leaked straight through
+// to the API response. Math.max(..., 1) closes that off for both page and limit.
+const pageNum = Math.max(parseInt(page, 10) || 1, 1);
+const limitNum = Math.min(Math.max(parseInt(limit, 10) || 10, 1), 100);
+const skip = (pageNum - 1) * limitNum;
 
     const totalCount = await Transaction.countDocuments(query);
     const totalPages = Math.ceil(totalCount / limitNum);

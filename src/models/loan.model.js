@@ -24,7 +24,30 @@ const loanSchema = new mongoose.Schema(
         outstandingBalance: { type: mongoose.Schema.Types.Decimal128 },
         repaymentSchedule: [repaymentScheduleEntrySchema],
     },
-    { timestamps: true }
+    {
+        timestamps: true,
+        toJSON: {
+            transform: (doc, ret) => {
+                if (ret.principal !== undefined && ret.principal !== null) {
+                    ret.principal = ret.principal.toString();
+                }
+                if (ret.interestRate !== undefined && ret.interestRate !== null) {
+                    ret.interestRate = ret.interestRate.toString();
+                }
+                if (ret.outstandingBalance !== undefined && ret.outstandingBalance !== null) {
+                    ret.outstandingBalance = ret.outstandingBalance.toString();
+                }
+                if (Array.isArray(ret.repaymentSchedule)) {
+                    ret.repaymentSchedule = ret.repaymentSchedule.map((entry) => ({
+                        ...entry,
+                        amount: entry.amount !== undefined && entry.amount !== null ? entry.amount.toString() : entry.amount,
+                        paidAmount: entry.paidAmount !== undefined && entry.paidAmount !== null ? entry.paidAmount.toString() : entry.paidAmount,
+                    }));
+                }
+                return ret;
+            },
+        },
+    }
 );
 
 loanSchema.index({ customerId: 1 });

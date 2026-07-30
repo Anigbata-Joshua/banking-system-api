@@ -19,9 +19,17 @@ export async function generateStatementData({ accountId, startDate, endDate }) {
         throw new Error(`Invalid endDate: "${endDate}"`);
     }
 
+    // new Date("2026-07-29") parses to midnight UTC (00:00:00.000) on that day, not
+    // end-of-day. Using it as-is in a $lte filter silently excludes every transaction
+    // that happened later that same day — which looks like missing data, not a bug,
+    // unless you notice the date range said to include that day at all. Push the end
+    // boundary to the last instant of the day so "endDate" actually means the whole day.
+    const endOfDay = new Date(end);
+    endOfDay.setUTCHours(23, 59, 59, 999);
+
     const transactions = await Transaction.find({
         account: accountId,
-        createdAt: { $gte: start, $lte: end },
+        createdAt: { $gte: start, $lte: endOfDay },
     }).sort({ createdAt: 1 });
 
     return { account, transactions };

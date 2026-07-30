@@ -13,10 +13,22 @@ const transactionSchema = new mongoose.Schema(
         initiatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, },
         idempotencyKey: { type: String, required: true, unique: true, index: true,},
     },
-    {timestamps: true,}
+    {
+        timestamps: true,
+        toJSON: {
+            transform: (doc, ret) => {
+                if (ret.amount !== undefined && ret.amount !== null) {
+                    ret.amount = ret.amount.toString();
+                }
+                if (ret.balanceAfter !== undefined && ret.balanceAfter !== null) {
+                    ret.balanceAfter = ret.balanceAfter.toString();
+                }
+                return ret;
+            },
+        },
+    }
 );
 
-// Indexes
 transactionSchema.index({ account: 1, createdAt: -1 });
 
 const Transaction = mongoose.model('Transaction', transactionSchema);

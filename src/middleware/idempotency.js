@@ -1,14 +1,21 @@
 import Idempotency from '../models/idempotency.model.js';
 
 export async function enforceIdempotency(req, res, next) {
-    const key = req.headers['idempotency-key'];
+    const rawKey = req.headers['idempotency-key'];
 
-    if (!key) {
+    if (!rawKey) {
         return res.status(400).json({
             success: false,
             message: 'Idempotency-Key header is required',
         });
     }
+
+    // Scope the key to the authenticated user (this middleware always runs after
+    // `authenticate`, so req.user is guaranteed to be set). Previously the key was a
+    // bare global string with no owner — two different users who happened to submit
+    // the same Idempotency-Key value would silently receive each other's cached
+    // response, including account/transaction data. Scoping by user closes that.
+    const key = `${req.user.userId}:${rawKey}`;
 
     let record;
     try {

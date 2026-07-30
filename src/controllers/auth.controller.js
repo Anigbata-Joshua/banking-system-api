@@ -74,7 +74,62 @@ export const register = catchAsync(async (req, res) => {
     });
 });
 
+export const createStaff = catchAsync(async (req, res) => {
+    const { name, email, password, phone, role } = req.body;
+
+    if (!['teller', 'manager'].includes(role)) {
+        return res.status(400).json({
+            success: false,
+            message: "Role must be either 'teller' or 'manager'",
+        });
+    }
+
+    if (!name || !email || !password) {
+        return res.status(400).json({
+            success: false,
+            message: 'name, email and password are required',
+        });
+    }
+
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+        return res.status(400).json({
+            success: false,
+            message: 'This user or email is already registered',
+        });
+    }
+
+    const newStaff = await User.create({
+        name,
+        email,
+        passwordHash: password,
+        phone,
+        role,
+    });
+
+    await logAction(
+        req.user.userId,
+        'CREATE_STAFF_USER',
+        { createdUserId: newStaff._id, email: newStaff.email, role: newStaff.role },
+        req.ip
+    );
+
+    res.status(201).json({
+        success: true,
+        message: 'Staff registered successfully',
+        data: {
+            user: {
+                id: newStaff._id,
+                name: newStaff.name,
+                email: newStaff.email,
+                role: newStaff.role,
+            },
+        },
+    });
+});
+
 export const login = catchAsync(async (req, res) => {
+
     const { email, password } = req.body;
 
     const user = await User.findOne({ email });

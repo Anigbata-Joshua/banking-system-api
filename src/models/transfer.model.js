@@ -10,7 +10,17 @@ const transferSchema = new mongoose.Schema(
         initiatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, },
         note: { type: String, trim: true, },
     },
-    { timestamps: true, }
+    {
+        timestamps: true,
+        toJSON: {
+            transform: (doc, ret) => {
+                if (ret.amount !== undefined && ret.amount !== null) {
+                    ret.amount = ret.amount.toString();
+                }
+                return ret;
+            },
+        },
+    }
 );
 
 const Transfer = mongoose.model('Transfer', transferSchema);

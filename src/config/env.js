@@ -25,7 +25,7 @@ export const env = {
 
     //JWT
     jwtAccessSecret: required("JWT_ACCESS_SECRET"),
-    jwtAccessExpiresIn: process.env.JWT_ACCESS_EXPIRATION || "15m",
+    jwtAccessExpiresIn: process.env.JWT_ACCESS_EXPIRATION || "45m",
 
     jwtRefreshSecret: required("JWT_REFRESH_SECRET"),
     jwtRefreshExpiresIn: process.env.JWT_REFRESH_EXPIRATION || "7d",

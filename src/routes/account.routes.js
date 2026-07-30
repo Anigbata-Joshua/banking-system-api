@@ -8,7 +8,7 @@ import * as statementController from '../controllers/statement.controller.js';
 
 const router = Router();
 
-router.post('/', authenticate, accountController.openAccount);
+router.post('/', authenticate, authorize('customer'), accountController.openAccount);
 router.get('/:accountNumber', authenticate, accountController.getAccountByNumber);
 router.get('/', authenticate, accountController.getMyAccounts);
 router.patch('/:accountNumber/freeze', authenticate, authorize('teller', 'manager', 'admin'), accountController.freezeAccount);

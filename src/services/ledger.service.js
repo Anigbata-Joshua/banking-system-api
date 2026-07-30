@@ -22,7 +22,20 @@ function parsePositiveAmount(amount, label = 'Amount') {
         error.statusCode = 400;
         throw error;
     }
+    // Reject sub-cent precision instead of silently rounding it away. Previously an
+    // amount like 0.001 would be accepted, stored verbatim on the transaction record,
+    // but rounded to 0.00 when applied to the balance — leaving the ledger and the
+    // balance permanently out of sync.
+    if (value.decimalPlaces() > 2) {
+        const error = new Error(`${label} cannot have more than 2 decimal places`);
+        error.statusCode = 400;
+        throw error;
+    }
     return value;
+}
+
+function toDecimal128(bigNumberValue) {
+    return mongoose.Types.Decimal128.fromString(bigNumberValue.toFixed(2));
 }
 
 function randomJitter() {
@@ -30,38 +43,44 @@ function randomJitter() {
 }
 
 export async function deposit({ accountNumber, amount, initiatedBy, idempotencyKey, description }) {
+    const depositAmount = parsePositiveAmount(amount, 'Deposit amount');
+    const incValue = toDecimal128(depositAmount);
+
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
         const session = await mongoose.startSession();
         try {
             session.startTransaction();
 
-            const account = await Account.findOne({ accountNumber }).session(session);
-            if (!account) {
-                throw new Error('Account not found');
-            }
-            if (account.status !== 'active') {
-                throw new Error(`Cannot deposit into a ${account.status} account`);
-            }
-
-            const currentBalance = new BigNumber(account.balance.toString());
-            const depositAmount = parsePositiveAmount(amount, 'Deposit amount');
-            const newBalance = currentBalance.plus(depositAmount);
-
+            // Atomic conditional update: the balance mutation and the "is this account
+            // eligible" check happen as a single MongoDB operation, so no other request
+            // can read a stale balance and race this write. This replaces the previous
+            // read-then-compute-then-conditionally-write pattern, which had a window
+            // between the read and the write where two concurrent requests could both
+            // compute their result from the same starting balance and both succeed —
+            // a confirmed double-spend/lost-update bug.
             const updatedAccount = await Account.findOneAndUpdate(
-                { _id: account._id, version: account.version },
-                { $set: { balance: newBalance.toFixed(2) }, $inc: { version: 1 } },
+                { accountNumber, status: 'active' },
+                { $inc: { balance: incValue, version: 1 } },
                 { returnDocument: 'after', session }
             );
 
             if (!updatedAccount) {
-                throw new Error('VERSION_CONFLICT');
+                const existing = await Account.findOne({ accountNumber }).session(session);
+                if (!existing) {
+                    const error = new Error('Account not found');
+                    error.statusCode = 404;
+                    throw error;
+                }
+                const error = new Error(`Cannot deposit into a ${existing.status} account`);
+                error.statusCode = 400;
+                throw error;
             }
 
             const transaction = await Transaction.create([{
                 transactionId: idempotencyKey,
                 account: updatedAccount._id,
                 type: 'deposit',
-                amount,
+                amount: depositAmount.toFixed(2),
                 balanceAfter: updatedAccount.balance,
                 status: 'completed',
                 description,
@@ -76,9 +95,6 @@ export async function deposit({ accountNumber, amount, initiatedBy, idempotencyK
             await session.abortTransaction();
 
             if (!isRetryableError(error) || attempt === MAX_RETRIES - 1) {
-                if (error.message === 'VERSION_CONFLICT') {
-                    throw new Error('Could not complete deposit after multiple attempts — please retry');
-                }
                 throw error;
             }
 
@@ -91,43 +107,67 @@ export async function deposit({ accountNumber, amount, initiatedBy, idempotencyK
 }
 
 export async function withdraw({ accountNumber, amount, initiatedBy, idempotencyKey, description }) {
+    const withdrawalAmount = parsePositiveAmount(amount, 'Withdrawal amount');
+
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
         const session = await mongoose.startSession();
         try {
             session.startTransaction();
 
-            const account = await Account.findOne({ accountNumber }).session(session);
-            if (!account) {
-                throw new Error('Account not found');
+            // overdraftLimit changes far less often than balance and isn't itself part of
+            // the race we're closing, so a plain read for it here is fine — the balance
+            // check below is what must be atomic, and it is.
+            const preCheck = await Account.findOne({ accountNumber }).session(session);
+            if (!preCheck) {
+                const error = new Error('Account not found');
+                error.statusCode = 404;
+                throw error;
             }
-            if (account.status !== 'active') {
-                throw new Error(`Cannot withdraw from a ${account.status} account`);
+            if (preCheck.status !== 'active') {
+                const error = new Error(`Cannot withdraw from a ${preCheck.status} account`);
+                error.statusCode = 400;
+                throw error;
             }
 
-            const currentBalance = new BigNumber(account.balance.toString());
-            const withdrawalAmount = parsePositiveAmount(amount, 'Withdrawal amount');
-            const newBalance = currentBalance.minus(withdrawalAmount);
-
-            const overdraftLimit = new BigNumber(account.overdraftLimit.toString());
-            if (newBalance.isLessThan(overdraftLimit.negated())) {
-                throw new Error('Insufficient funds');
-            }
+            const overdraftLimit = new BigNumber(preCheck.overdraftLimit.toString());
+            // Balance must stay >= -overdraftLimit after the withdrawal, i.e. the
+            // CURRENT balance must be >= withdrawalAmount - overdraftLimit. This
+            // threshold is evaluated as part of the same atomic operation that performs
+            // the debit, so a concurrent withdrawal cannot slip through a window between
+            // "check balance" and "apply debit" — there is no such window anymore.
+            const minRequiredBalance = toDecimal128(withdrawalAmount.minus(overdraftLimit));
+            const decValue = toDecimal128(withdrawalAmount.negated());
 
             const updatedAccount = await Account.findOneAndUpdate(
-                { _id: account._id, version: account.version },
-                { $set: { balance: newBalance.toFixed(2) }, $inc: { version: 1 } },
+                {
+                    _id: preCheck._id,
+                    status: 'active',
+                    balance: { $gte: minRequiredBalance },
+                },
+                { $inc: { balance: decValue, version: 1 } },
                 { returnDocument: 'after', session }
             );
 
             if (!updatedAccount) {
-                throw new Error('VERSION_CONFLICT');
+                // Re-check with fresh eyes: the account may have gone inactive, or —
+                // most likely — another request already spent the funds since our read
+                // above. Either way, this is a real, current rejection, not a stale one.
+                const fresh = await Account.findById(preCheck._id).session(session);
+                if (!fresh || fresh.status !== 'active') {
+                    const error = new Error(`Cannot withdraw from a ${fresh ? fresh.status : 'missing'} account`);
+                    error.statusCode = 400;
+                    throw error;
+                }
+                const error = new Error('Insufficient funds');
+                error.statusCode = 400;
+                throw error;
             }
 
             const transaction = await Transaction.create([{
                 transactionId: idempotencyKey,
                 account: updatedAccount._id,
                 type: 'withdrawal',
-                amount,
+                amount: withdrawalAmount.toFixed(2),
                 balanceAfter: updatedAccount.balance,
                 status: 'completed',
                 description: description || 'Withdrawal',
@@ -142,9 +182,6 @@ export async function withdraw({ accountNumber, amount, initiatedBy, idempotency
             await session.abortTransaction();
 
             if (!isRetryableError(error) || attempt === MAX_RETRIES - 1) {
-                if (error.message === 'VERSION_CONFLICT') {
-                    throw new Error('Could not complete withdrawal after multiple attempts — please retry');
-                }
                 throw error;
             }
 
@@ -158,7 +195,9 @@ export async function withdraw({ accountNumber, amount, initiatedBy, idempotency
 
 export async function transfer({ fromAccountNumber, toAccountNumber, amount, initiatedBy, idempotencyKey, note }) {
     if (fromAccountNumber === toAccountNumber) {
-        throw new Error('Cannot transfer to the same account');
+        const error = new Error('Cannot transfer to the same account');
+        error.statusCode = 400;
+        throw error;
     }
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
@@ -173,31 +212,48 @@ export async function transfer({ fromAccountNumber, toAccountNumber, amount, ini
 
                 const acc = await Account.findOne({ accountNumber }).session(session);
                 if (!acc) {
-                    throw new Error(`${isDebit ? 'Source' : 'Destination'} account not found`);
+                    const error = new Error(`${isDebit ? 'Source' : 'Destination'} account not found`);
+                    error.statusCode = 404;
+                    throw error;
                 }
                 if (acc.status !== 'active') {
-                    throw new Error(`Cannot transfer ${isDebit ? 'from' : 'into'} a ${acc.status} account`);
+                    const error = new Error(`Cannot transfer ${isDebit ? 'from' : 'into'} a ${acc.status} account`);
+                    error.statusCode = 400;
+                    throw error;
                 }
 
-                const currentBalance = new BigNumber(acc.balance.toString());
-                const newBalance = isDebit
-                    ? currentBalance.minus(transferAmount)
-                    : currentBalance.plus(transferAmount);
+                let filter = { _id: acc._id, status: 'active' };
+                let incValue;
 
                 if (isDebit) {
                     const overdraftLimit = new BigNumber(acc.overdraftLimit.toString());
-                    if (newBalance.isLessThan(overdraftLimit.negated())) {
-                        throw new Error('Insufficient funds');
-                    }
+                    // Same atomic check-and-mutate pattern as withdraw(): the minimum
+                    // acceptable current balance is evaluated as part of the same
+                    // operation that performs the debit, closing the race window.
+                    filter.balance = { $gte: toDecimal128(transferAmount.minus(overdraftLimit)) };
+                    incValue = toDecimal128(transferAmount.negated());
+                } else {
+                    incValue = toDecimal128(transferAmount);
                 }
 
                 const updated = await Account.findOneAndUpdate(
-                    { _id: acc._id, version: acc.version },
-                    { $set: { balance: newBalance.toFixed(2) }, $inc: { version: 1 } },
+                    filter,
+                    { $inc: { balance: incValue, version: 1 } },
                     { returnDocument: 'after', session }
                 );
 
                 if (!updated) {
+                    if (isDebit) {
+                        const fresh = await Account.findById(acc._id).session(session);
+                        if (!fresh || fresh.status !== 'active') {
+                            const error = new Error(`Cannot transfer from a ${fresh ? fresh.status : 'missing'} account`);
+                            error.statusCode = 400;
+                            throw error;
+                        }
+                        const error = new Error('Insufficient funds');
+                        error.statusCode = 400;
+                        throw error;
+                    }
                     throw new Error('VERSION_CONFLICT');
                 }
 
@@ -216,7 +272,7 @@ export async function transfer({ fromAccountNumber, toAccountNumber, amount, ini
                 transferId: idempotencyKey,
                 fromAccount: updatedFromAccount._id,
                 toAccount: updatedToAccount._id,
-                amount,
+                amount: transferAmount.toFixed(2),
                 status: 'completed',
                 initiatedBy,
                 note,
@@ -227,7 +283,7 @@ export async function transfer({ fromAccountNumber, toAccountNumber, amount, ini
                     transactionId: `${idempotencyKey}-out`,
                     account: updatedFromAccount._id,
                     type: 'transfer_out',
-                    amount,
+                    amount: transferAmount.toFixed(2),
                     balanceAfter: updatedFromAccount.balance,
                     relatedTransfer: newTransfer[0]._id,
                     status: 'completed',
@@ -239,7 +295,7 @@ export async function transfer({ fromAccountNumber, toAccountNumber, amount, ini
                     transactionId: `${idempotencyKey}-in`,
                     account: updatedToAccount._id,
                     type: 'transfer_in',
-                    amount,
+                    amount: transferAmount.toFixed(2),
                     balanceAfter: updatedToAccount.balance,
                     relatedTransfer: newTransfer[0]._id,
                     status: 'completed',
@@ -282,28 +338,49 @@ export async function repayLoan({ loanId, amount, initiatedBy, idempotencyKey })
             session.startTransaction();
 
             const loan = await Loan.findById(loanId).populate('disbursementAccountId').session(session);
-            if (!loan) throw new Error('Loan not found');
-            if (loan.status !== 'active') throw new Error(`Cannot repay a loan with status '${loan.status}'`);
+            if (!loan) {
+                const error = new Error('Loan not found');
+                error.statusCode = 404;
+                throw error;
+            }
+            if (loan.status !== 'active') {
+                const error = new Error(`Cannot repay a loan with status '${loan.status}'`);
+                error.statusCode = 400;
+                throw error;
+            }
 
             const unpaidEntries = loan.repaymentSchedule.filter((e) => e.status === 'pending' || e.status === 'partially_paid');
-            if (unpaidEntries.length === 0) throw new Error('No pending or partially paid repayments remain on this loan');
+            if (unpaidEntries.length === 0) {
+                const error = new Error('No pending or partially paid repayments remain on this loan');
+                error.statusCode = 400;
+                throw error;
+            }
 
             const outstanding = new BigNumber(loan.outstandingBalance.toString());
             const paymentAmount = parsePositiveAmount(amount, 'Repayment amount');
 
             if (paymentAmount.isGreaterThan(outstanding)) {
-                throw new Error(`Repayment amount $${paymentAmount.toFixed(2)} exceeds outstanding loan balance $${outstanding.toFixed(2)}`);
+                const error = new Error(`Repayment amount $${paymentAmount.toFixed(2)} exceeds outstanding loan balance $${outstanding.toFixed(2)}`);
+                error.statusCode = 400;
+                throw error;
             }
 
             const account = await Account.findOne({ accountNumber: loan.disbursementAccountId.accountNumber }).session(session);
-            if (account.status !== 'active') throw new Error(`Cannot withdraw from a ${account.status} account`);
+            if (account.status !== 'active') {
+                const error = new Error(`Cannot withdraw from a ${account.status} account`);
+                error.statusCode = 400;
+                throw error;
+            }
 
             const currentBalance = new BigNumber(account.balance.toString());
             const newBalance = currentBalance.minus(paymentAmount);
 
             const overdraftLimit = new BigNumber(account.overdraftLimit.toString());
-            if (newBalance.isLessThan(overdraftLimit.negated())) throw new Error('Insufficient funds');
-
+            if (newBalance.isLessThan(overdraftLimit.negated())) {
+                const error = new Error('Insufficient funds');
+                error.statusCode = 400;
+                throw error;
+            }
             const updatedAccount = await Account.findOneAndUpdate(
                 { _id: account._id, version: account.version },
                 { $set: { balance: newBalance.toFixed(2) }, $inc: { version: 1 } },
@@ -358,7 +435,11 @@ export async function repayLoan({ loanId, amount, initiatedBy, idempotencyKey })
         } catch (error) {
             await session.abortTransaction();
             if (!isRetryableError(error) || attempt === MAX_RETRIES - 1) {
-                if (error.message === 'VERSION_CONFLICT') throw new Error('Could not complete repayment — please retry');
+                if (error.message === 'VERSION_CONFLICT') {
+                    const conflictError = new Error('Could not complete repayment — please retry');
+                    conflictError.statusCode = 409;
+                    throw conflictError;
+                }
                 throw error;
             }
             await randomJitter();
