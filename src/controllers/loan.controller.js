@@ -1,4 +1,5 @@
 import Account from '../models/account.model.js';
+import mongoose from 'mongoose';
 import Loan from '../models/loan.model.js';
 import catchAsync from '../utils/catchAsync.js';
 import * as ledgerService from '../services/ledger.service.js';
@@ -86,7 +87,44 @@ export const getLoans = catchAsync(async (req, res) => {
 });
 
 
-//Approve loan
+// Maker step: teller or manager reviews the application and recommends it
+// for approval. No money moves here — this only flags the loan as ready for
+// a separate checker to confirm.
+export const recommendLoan = catchAsync(async (req, res) => {
+    const { id } = req.params;
+
+    const loan = await Loan.findById(id);
+    if (!loan) {
+        return res.status(404).json({
+            success: false,
+            message: 'Loan not found'
+        });
+    }
+
+    if (loan.status !== 'pending') {
+        return res.status(400).json({
+            success: false,
+            message: `Cannot recommend a loan with status '${loan.status}'`
+        });
+    }
+
+    loan.status = 'approved';
+    loan.proposedBy = req.user.userId;
+    loan.proposedAt = new Date();
+    await loan.save();
+
+    await logAction(req.user.userId, 'RECOMMEND_LOAN', { loanId: loan._id, principal: loan.principal }, req.ip);
+
+    res.status(200).json({
+        success: true,
+        message: 'Loan recommended for approval — awaiting confirmation from a different manager or admin',
+        data: loan,
+    });
+});
+
+// Checker step: a manager or admin — who must NOT be the same person who
+// recommended it — confirms the loan. This is the only step that actually
+// disburses funds.
 export const approveLoan = catchAsync(async (req, res) => {
     const { id } = req.params;
 
@@ -98,10 +136,24 @@ export const approveLoan = catchAsync(async (req, res) => {
         });
     }
 
-    if (loan.status !== 'pending') {
+    if (loan.status === 'pending') {
+        return res.status(400).json({
+            success: false,
+            message: 'This loan has not been recommended for approval yet. A teller or manager must recommend it first.',
+        });
+    }
+
+    if (loan.status !== 'approved') {
         return res.status(400).json({
             success: false,
             message: `Cannot approve a loan with status '${loan.status}'`
+        });
+    }
+
+    if (loan.proposedBy && loan.proposedBy.toString() === req.user.userId) {
+        return res.status(403).json({
+            success: false,
+            message: 'The maker and checker must be different people — you cannot confirm a loan you recommended yourself',
         });
     }
 
@@ -120,22 +172,35 @@ export const approveLoan = catchAsync(async (req, res) => {
         };
     });
 
-    const disbursement = await ledgerService.deposit({
-        accountNumber: loan.disbursementAccountId.accountNumber,
-        amount: principal.toFixed(2),
-        initiatedBy: req.user.userId,
-        idempotencyKey: `loan-disbursement-${loan._id}`,
-        description: `Loan disbursement for loan ${loan._id}`,
-    });
+    const session = await mongoose.startSession();
+    let disbursement;
+    try {
+        session.startTransaction();
 
-    loan.status = 'active';
-    loan.approvedBy = req.user.userId;
-    loan.disbursementDate = new Date();
-    loan.outstandingBalance = totalRepayable.toFixed(2);
-    loan.repaymentSchedule = repaymentSchedule;
-    await loan.save();
+        disbursement = await ledgerService.deposit({
+            accountNumber: loan.disbursementAccountId.accountNumber,
+            amount: principal.toFixed(2),
+            initiatedBy: req.user.userId,
+            idempotencyKey: `loan-disbursement-${loan._id}`,
+            description: `Loan disbursement for loan ${loan._id}`,
+        }, session);
 
-    await logAction(req.user.userId, 'APPROVE_LOAN', { loanId: loan._id, principal: loan.principal }, req.ip);
+        loan.status = 'active';
+        loan.approvedBy = req.user.userId;
+        loan.disbursementDate = new Date();
+        loan.outstandingBalance = totalRepayable.toFixed(2);
+        loan.repaymentSchedule = repaymentSchedule;
+        await loan.save({ session });
+
+        await session.commitTransaction();
+    } catch (error) {
+        await session.abortTransaction();
+        throw error;
+    } finally {
+        session.endSession();
+    }
+
+    await logAction(req.user.userId, 'CONFIRM_LOAN_APPROVAL', { loanId: loan._id, principal: loan.principal, proposedBy: loan.proposedBy }, req.ip);
 
     res.status(200).json({
         success: true,
@@ -156,7 +221,12 @@ export const rejectLoan = catchAsync(async (req, res) => {
         });
     }
 
-    if (loan.status !== 'pending') {
+    // A loan can be rejected either before it's been recommended (pending) or
+    // after a maker recommended it but before a checker confirmed it
+    // (approved). Rejecting is a stop-the-money action, not a money-movement
+    // action, so — unlike confirmation — it doesn't require a different
+    // person than whoever proposed it.
+    if (loan.status !== 'pending' && loan.status !== 'approved') {
         return res.status(400).json({
             success: false,
             message: `Cannot reject a loan with status '${loan.status}'`

@@ -1,7 +1,17 @@
 import Beneficiary from '../models/beneficiay.model.js';
+import Account from '../models/account.model.js';
 import catchAsync from '../utils/catchAsync.js';
+
 export const addBeneficiary = catchAsync(async (req, res) => {
     const { beneficiaryAccountNumber, beneficiaryName, nickname } = req.body;
+
+    const targetAccount = await Account.findOne({ accountNumber: beneficiaryAccountNumber });
+    if (!targetAccount) {
+        return res.status(404).json({
+            success: false,
+            message: 'Beneficiary account number does not exist',
+        });
+    }
 
     const existingBeneficiary = await Beneficiary.findOne({
         customerId: req.user.customerId,

@@ -19,7 +19,10 @@ import customerRoutes from './routes/customer.routes.js';
 const app = express();
 
 app.use(helmet());
-app.use(cors());
+app.use(cors({
+    origin: env.corsOrigins && env.corsOrigins.length > 0 ? env.corsOrigins : env.frontendURI,
+    credentials: true,
+}));
 app.use(express.json());
 
 const globalLimiter = rateLimit({
@@ -42,7 +45,6 @@ app.use('/api/loans', loanRoutes);
 app.use('/api/audit-logs', auditLogRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/customers', customerRoutes);
-app.use('/uploads', express.static(env.uploadPath || 'uploads/'));
 
 // Not yet mounted — waiting on auth.routes.js
 const authLimiter = rateLimit({
@@ -57,7 +59,7 @@ const authLimiter = rateLimit({
 });
 
 // Routes
-app.use('/api/auth', authRoutes);
+app.use('/api/auth', authLimiter, authRoutes);
 
 app.use(errorHandler);
 

@@ -61,7 +61,7 @@ describe('idempotency middleware', () => {
             .set('Authorization', `Bearer ${token}`);
 
         // Only one deposit of 25.00 should have actually been applied.
-        expect(check.body.data.balance.$numberDecimal).toBe('25.00');
+        expect(check.body.data.balance).toBe('25.00');
     });
 
     it('returns 409 for a genuinely concurrent request with the same key', async () => {

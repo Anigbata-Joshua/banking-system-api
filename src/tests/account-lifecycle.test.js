@@ -62,10 +62,8 @@ describe('account freeze/unfreeze', () => {
             .set('Idempotency-Key', 'frozen-deposit-1')
             .send({ amount: '10.00' });
 
-        // ledger.service.js throws a plain Error with no statusCode for this
-        // case, so it currently surfaces as a 500 rather than a clean 400.
-        // Documenting current behavior; ideally this becomes a 400.
-        expect(res.status).toBe(500);
+        // ledger.service.js throws a 400 error cleanly.
+        expect(res.status).toBe(400);
     });
 });
 

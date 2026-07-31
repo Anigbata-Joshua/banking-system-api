@@ -1,7 +1,7 @@
 import Card from '../models/card.model.js';
 import Account from '../models/account.model.js';
 import catchAsync from '../utils/catchAsync.js';
-import bcrypt from 'bcryptjs';
+import bcrypt from 'bcrypt';
 import { logAction } from '../services/auditLog.service.js';
 
 export const issueCard = catchAsync(async (req, res) => {

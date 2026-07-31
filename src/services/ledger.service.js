@@ -42,9 +42,43 @@ function randomJitter() {
     return new Promise((resolve) => setTimeout(resolve, Math.random() * 30));
 }
 
-export async function deposit({ accountNumber, amount, initiatedBy, idempotencyKey, description }) {
+export async function deposit({ accountNumber, amount, initiatedBy, idempotencyKey, description }, sessionOption = null) {
     const depositAmount = parsePositiveAmount(amount, 'Deposit amount');
     const incValue = toDecimal128(depositAmount);
+
+    if (sessionOption) {
+        const updatedAccount = await Account.findOneAndUpdate(
+            { accountNumber, status: 'active' },
+            { $inc: { balance: incValue, version: 1 } },
+            { returnDocument: 'after', session: sessionOption }
+        );
+
+        if (!updatedAccount) {
+            const existing = await Account.findOne({ accountNumber }).session(sessionOption);
+            if (!existing) {
+                const error = new Error('Account not found');
+                error.statusCode = 404;
+                throw error;
+            }
+            const error = new Error(`Cannot deposit into a ${existing.status} account`);
+            error.statusCode = 400;
+            throw error;
+        }
+
+        const transaction = await Transaction.create([{
+            transactionId: idempotencyKey,
+            account: updatedAccount._id,
+            type: 'deposit',
+            amount: depositAmount.toFixed(2),
+            balanceAfter: updatedAccount.balance,
+            status: 'completed',
+            description,
+            initiatedBy,
+            idempotencyKey,
+        }], { session: sessionOption });
+
+        return { account: updatedAccount, transaction: transaction[0] };
+    }
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
         const session = await mongoose.startSession();

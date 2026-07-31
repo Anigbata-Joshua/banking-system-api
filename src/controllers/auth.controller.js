@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 import Customer from "../models/customer.model.js";
 import User from "../models/user.model.js";
 import catchAsync from "../utils/catchAsync.js";
-import bcrypt from 'bcryptjs';
+import bcrypt from 'bcrypt';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from "../utils/jwt.js";
 import { logAction } from "../services/auditLog.service.js";
 

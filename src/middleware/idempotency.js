@@ -40,9 +40,10 @@ export async function enforceIdempotency(req, res, next) {
     // save the eventual result onto this record afterward.
     const originalJson = res.json.bind(res);
     res.json = (body) => {
+        const serializedBody = JSON.parse(JSON.stringify(body));
         Idempotency.findByIdAndUpdate(record._id, {
             statusCode: res.statusCode,
-            response: body,
+            response: serializedBody,
         }).catch((err) => console.error('Failed to save idempotency record:', err));
 
         return originalJson(body);

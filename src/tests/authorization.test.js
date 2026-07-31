@@ -86,10 +86,11 @@ describe('cross-customer authorization', () => {
         const owner = await createCustomerWithAccount();
         const intruder = await createCustomerWithAccount();
 
+        const beneficiaryUser = await createCustomerWithAccount();
         const addRes = await request(app)
             .post('/api/beneficiaries')
             .set('Authorization', `Bearer ${owner.token}`)
-            .send({ beneficiaryAccountNumber: '1234567890', beneficiaryName: 'Some Beneficiary' });
+            .send({ beneficiaryAccountNumber: beneficiaryUser.account.accountNumber, beneficiaryName: 'Some Beneficiary' });
 
         const res = await request(app)
             .delete(`/api/beneficiaries/${addRes.body.data._id}`)
