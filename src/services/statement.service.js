@@ -1,6 +1,6 @@
 import Account from '../models/account.model.js';
 import Transaction from '../models/transaction.model.js';
-import Statement from '../models/statement.model.js';
+//import Statement from '../models/statement.model.js';
 
 import PDFDocument from 'pdfkit';
 export async function generateStatementData({ accountId, startDate, endDate }) {

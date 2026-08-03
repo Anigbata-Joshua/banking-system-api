@@ -7,9 +7,7 @@ const repaymentScheduleEntrySchema = new mongoose.Schema(
         paidAmount: { type: mongoose.Schema.Types.Decimal128, required: true, default: () => mongoose.Types.Decimal128.fromString('0.00') },
         status: { type: String, enum: ['pending', 'paid', 'overdue', 'partially_paid'], default: 'pending' },
         paidTransactionId: { type: mongoose.Schema.Types.ObjectId, ref: 'Transaction' },
-    },
-    { _id: false }
-);
+    },{ _id: false });
 
 const loanSchema = new mongoose.Schema(
     {

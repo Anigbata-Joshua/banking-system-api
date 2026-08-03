@@ -30,7 +30,7 @@ function parsePositiveAmount(amount, label = 'Amount') {
         const error = new Error(`${label} cannot have more than 2 decimal places`);
         error.statusCode = 400;
         throw error;
-    }
+    } 
     return value;
 }
 
@@ -173,16 +173,11 @@ export async function withdraw({ accountNumber, amount, initiatedBy, idempotency
             const decValue = toDecimal128(withdrawalAmount.negated());
 
             const updatedAccount = await Account.findOneAndUpdate(
-                {
-                    _id: preCheck._id,
-                    status: 'active',
-                    balance: { $gte: minRequiredBalance },
-                },
+                { _id: preCheck._id, status: 'active',balance: { $gte: minRequiredBalance } },
                 { $inc: { balance: decValue, version: 1 } },
-                { returnDocument: 'after', session }
-            );
+                { returnDocument: 'after', session });
 
-            if (!updatedAccount) {
+            if (!updatedAccount){
                 // Re-check with fresh eyes: the account may have gone inactive, or —
                 // most likely — another request already spent the funds since our read
                 // above. Either way, this is a real, current rejection, not a stale one.
@@ -232,7 +227,7 @@ export async function transfer({ fromAccountNumber, toAccountNumber, amount, ini
         const error = new Error('Cannot transfer to the same account');
         error.statusCode = 400;
         throw error;
-    }
+    };
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
         const session = await mongoose.startSession();
@@ -273,8 +268,7 @@ export async function transfer({ fromAccountNumber, toAccountNumber, amount, ini
                 const updated = await Account.findOneAndUpdate(
                     filter,
                     { $inc: { balance: incValue, version: 1 } },
-                    { returnDocument: 'after', session }
-                );
+                    { returnDocument: 'after', session });
 
                 if (!updated) {
                     if (isDebit) {
