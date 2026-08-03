@@ -22,15 +22,12 @@ function parsePositiveAmount(amount, label = 'Amount') {
         error.statusCode = 400;
         throw error;
     }
-    // Reject sub-cent precision instead of silently rounding it away. Previously an
-    // amount like 0.001 would be accepted, stored verbatim on the transaction record,
-    // but rounded to 0.00 when applied to the balance — leaving the ledger and the
-    // balance permanently out of sync.
+    // Reject sub-cent precision instead of silently rounding it away, since it would previously be stored verbatim on the transaction but rounded to 0.00 on the balance, leaving the two out of sync.
     if (value.decimalPlaces() > 2) {
         const error = new Error(`${label} cannot have more than 2 decimal places`);
         error.statusCode = 400;
         throw error;
-    } 
+    }
     return value;
 }
 
@@ -42,19 +39,53 @@ function randomJitter() {
     return new Promise((resolve) => setTimeout(resolve, Math.random() * 30));
 }
 
+// ============================================================================
+// CHANGE: extracted the retry-with-transaction pattern that was previously
+// copy-pasted (with identical shape) inside deposit(), withdraw(), transfer(),
+// and repayLoan(). Any function that needs "run this in a Mongo transaction,
+// retry on transient write conflicts, jitter between attempts" now calls this
+// instead of hand-rolling its own for-loop. This also closes the gap where
+// deposit()'s sessionOption branch (used by loan disbursement) had NO retry
+// coverage at all — see the comment on withTransactionRetry below and the
+// updated loan.controller.js.
+//
+// fn receives the active session and must return the result to hand back to
+// the caller. fn should throw errors with a .statusCode where applicable, the
+// same convention already used throughout this file.
+// ============================================================================
+export async function withTransactionRetry(fn) {
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        const session = await mongoose.startSession();
+        try {
+            session.startTransaction();
+            const result = await fn(session);
+            await session.commitTransaction();
+            return result;
+        } catch (error) {
+            await session.abortTransaction();
+            if (!isRetryableError(error) || attempt === MAX_RETRIES - 1) {
+                throw error;
+            }
+            await randomJitter();
+        } finally {
+            session.endSession();
+        }
+    }
+}
+
 export async function deposit({ accountNumber, amount, initiatedBy, idempotencyKey, description }, sessionOption = null) {
     const depositAmount = parsePositiveAmount(amount, 'Deposit amount');
     const incValue = toDecimal128(depositAmount);
 
-    if (sessionOption) {
+    async function runDeposit(session) {
         const updatedAccount = await Account.findOneAndUpdate(
             { accountNumber, status: 'active' },
             { $inc: { balance: incValue, version: 1 } },
-            { returnDocument: 'after', session: sessionOption }
+            { returnDocument: 'after', session }
         );
 
         if (!updatedAccount) {
-            const existing = await Account.findOne({ accountNumber }).session(sessionOption);
+            const existing = await Account.findOne({ accountNumber }).session(session);
             if (!existing) {
                 const error = new Error('Account not found');
                 error.statusCode = 404;
@@ -75,151 +106,92 @@ export async function deposit({ accountNumber, amount, initiatedBy, idempotencyK
             description,
             initiatedBy,
             idempotencyKey,
-        }], { session: sessionOption });
+        }], { session });
 
         return { account: updatedAccount, transaction: transaction[0] };
     }
 
-    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-        const session = await mongoose.startSession();
-        try {
-            session.startTransaction();
-
-            // Atomic conditional update: the balance mutation and the "is this account
-            // eligible" check happen as a single MongoDB operation, so no other request
-            // can read a stale balance and race this write. This replaces the previous
-            // read-then-compute-then-conditionally-write pattern, which had a window
-            // between the read and the write where two concurrent requests could both
-            // compute their result from the same starting balance and both succeed —
-            // a confirmed double-spend/lost-update bug.
-            const updatedAccount = await Account.findOneAndUpdate(
-                { accountNumber, status: 'active' },
-                { $inc: { balance: incValue, version: 1 } },
-                { returnDocument: 'after', session }
-            );
-
-            if (!updatedAccount) {
-                const existing = await Account.findOne({ accountNumber }).session(session);
-                if (!existing) {
-                    const error = new Error('Account not found');
-                    error.statusCode = 404;
-                    throw error;
-                }
-                const error = new Error(`Cannot deposit into a ${existing.status} account`);
-                error.statusCode = 400;
-                throw error;
-            }
-
-            const transaction = await Transaction.create([{
-                transactionId: idempotencyKey,
-                account: updatedAccount._id,
-                type: 'deposit',
-                amount: depositAmount.toFixed(2),
-                balanceAfter: updatedAccount.balance,
-                status: 'completed',
-                description,
-                initiatedBy,
-                idempotencyKey,
-            }], { session });
-
-            await session.commitTransaction();
-            return { account: updatedAccount, transaction: transaction[0] };
-
-        } catch (error) {
-            await session.abortTransaction();
-
-            if (!isRetryableError(error) || attempt === MAX_RETRIES - 1) {
-                throw error;
-            }
-
-            await randomJitter();
-
-        } finally {
-            session.endSession();
-        }
+    if (sessionOption) {
+        // ------------------------------------------------------------------
+        // CHANGE: previously this branch ran once with no retry coverage at
+        // all — if the caller's outer transaction hit a transient write
+        // conflict (e.g. two managers confirming different loans that touch
+        // the same account concurrently), the whole caller transaction just
+        // failed. Callers that need retry coverage should now use
+        // withTransactionRetry() themselves and pass the session it gives
+        // them in here (see approveLoan in loan.controller.js). This branch
+        // itself stays a single attempt, since it does not own the
+        // transaction/session lifecycle — it participates in whatever
+        // transaction the caller is already retrying.
+        // ------------------------------------------------------------------
+        return runDeposit(sessionOption);
     }
+
+    return withTransactionRetry(runDeposit);
 }
 
 export async function withdraw({ accountNumber, amount, initiatedBy, idempotencyKey, description }) {
     const withdrawalAmount = parsePositiveAmount(amount, 'Withdrawal amount');
 
-    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-        const session = await mongoose.startSession();
-        try {
-            session.startTransaction();
-
-            // overdraftLimit changes far less often than balance and isn't itself part of
-            // the race we're closing, so a plain read for it here is fine — the balance
-            // check below is what must be atomic, and it is.
-            const preCheck = await Account.findOne({ accountNumber }).session(session);
-            if (!preCheck) {
-                const error = new Error('Account not found');
-                error.statusCode = 404;
-                throw error;
-            }
-            if (preCheck.status !== 'active') {
-                const error = new Error(`Cannot withdraw from a ${preCheck.status} account`);
-                error.statusCode = 400;
-                throw error;
-            }
-
-            const overdraftLimit = new BigNumber(preCheck.overdraftLimit.toString());
-            // Balance must stay >= -overdraftLimit after the withdrawal, i.e. the
-            // CURRENT balance must be >= withdrawalAmount - overdraftLimit. This
-            // threshold is evaluated as part of the same atomic operation that performs
-            // the debit, so a concurrent withdrawal cannot slip through a window between
-            // "check balance" and "apply debit" — there is no such window anymore.
-            const minRequiredBalance = toDecimal128(withdrawalAmount.minus(overdraftLimit));
-            const decValue = toDecimal128(withdrawalAmount.negated());
-
-            const updatedAccount = await Account.findOneAndUpdate(
-                { _id: preCheck._id, status: 'active',balance: { $gte: minRequiredBalance } },
-                { $inc: { balance: decValue, version: 1 } },
-                { returnDocument: 'after', session });
-
-            if (!updatedAccount){
-                // Re-check with fresh eyes: the account may have gone inactive, or —
-                // most likely — another request already spent the funds since our read
-                // above. Either way, this is a real, current rejection, not a stale one.
-                const fresh = await Account.findById(preCheck._id).session(session);
-                if (!fresh || fresh.status !== 'active') {
-                    const error = new Error(`Cannot withdraw from a ${fresh ? fresh.status : 'missing'} account`);
-                    error.statusCode = 400;
-                    throw error;
-                }
-                const error = new Error('Insufficient funds');
-                error.statusCode = 400;
-                throw error;
-            }
-
-            const transaction = await Transaction.create([{
-                transactionId: idempotencyKey,
-                account: updatedAccount._id,
-                type: 'withdrawal',
-                amount: withdrawalAmount.toFixed(2),
-                balanceAfter: updatedAccount.balance,
-                status: 'completed',
-                description: description || 'Withdrawal',
-                initiatedBy,
-                idempotencyKey,
-            }], { session });
-
-            await session.commitTransaction();
-            return { account: updatedAccount, transaction: transaction[0] };
-
-        } catch (error) {
-            await session.abortTransaction();
-
-            if (!isRetryableError(error) || attempt === MAX_RETRIES - 1) {
-                throw error;
-            }
-
-            await randomJitter();
-
-        } finally {
-            session.endSession();
+    return withTransactionRetry(async (session) => {
+        // overdraftLimit changes far less often than balance and isn't itself part of
+        // the race we're closing, so a plain read for it here is fine — the balance
+        // check below is what must be atomic, and it is.
+        const preCheck = await Account.findOne({ accountNumber }).session(session);
+        if (!preCheck) {
+            const error = new Error('Account not found');
+            error.statusCode = 404;
+            throw error;
         }
-    }
+        if (preCheck.status !== 'active') {
+            const error = new Error(`Cannot withdraw from a ${preCheck.status} account`);
+            error.statusCode = 400;
+            throw error;
+        }
+
+        const overdraftLimit = new BigNumber(preCheck.overdraftLimit.toString());
+        // Balance must stay >= -overdraftLimit after the withdrawal, i.e. the
+        // CURRENT balance must be >= withdrawalAmount - overdraftLimit. This
+        // threshold is evaluated as part of the same atomic operation that performs
+        // the debit, so a concurrent withdrawal cannot slip through a window between
+        // "check balance" and "apply debit" — there is no such window anymore.
+        const minRequiredBalance = toDecimal128(withdrawalAmount.minus(overdraftLimit));
+        const decValue = toDecimal128(withdrawalAmount.negated());
+
+        const updatedAccount = await Account.findOneAndUpdate(
+            { _id: preCheck._id, status: 'active', balance: { $gte: minRequiredBalance } },
+            { $inc: { balance: decValue, version: 1 } },
+            { returnDocument: 'after', session });
+
+        if (!updatedAccount) {
+            // Re-check with fresh eyes: the account may have gone inactive, or —
+            // most likely — another request already spent the funds since our read
+            // above. Either way, this is a real, current rejection, not a stale one.
+            const fresh = await Account.findById(preCheck._id).session(session);
+            if (!fresh || fresh.status !== 'active') {
+                const error = new Error(`Cannot withdraw from a ${fresh ? fresh.status : 'missing'} account`);
+                error.statusCode = 400;
+                throw error;
+            }
+            const error = new Error('Insufficient funds');
+            error.statusCode = 400;
+            throw error;
+        }
+
+        const transaction = await Transaction.create([{
+            transactionId: idempotencyKey,
+            account: updatedAccount._id,
+            type: 'withdrawal',
+            amount: withdrawalAmount.toFixed(2),
+            balanceAfter: updatedAccount.balance,
+            status: 'completed',
+            description: description || 'Withdrawal',
+            initiatedBy,
+            idempotencyKey,
+        }], { session });
+
+        return { account: updatedAccount, transaction: transaction[0] };
+    });
 }
 
 export async function transfer({ fromAccountNumber, toAccountNumber, amount, initiatedBy, idempotencyKey, note }) {
@@ -229,11 +201,8 @@ export async function transfer({ fromAccountNumber, toAccountNumber, amount, ini
         throw error;
     };
 
-    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-        const session = await mongoose.startSession();
-        try {
-            session.startTransaction();
-
+    try {
+        return await withTransactionRetry(async (session) => {
             const transferAmount = parsePositiveAmount(amount, 'Transfer amount');
 
             async function applyBalanceChange(accountNumber) {
@@ -333,38 +302,28 @@ export async function transfer({ fromAccountNumber, toAccountNumber, amount, ini
                 },
             ], { session, ordered: true });
 
-            await session.commitTransaction();
             return {
                 transfer: newTransfer[0],
                 fromAccount: updatedFromAccount,
                 toAccount: updatedToAccount,
                 transactions,
             };
-
-        } catch (error) {
-            await session.abortTransaction();
-
-            if (!isRetryableError(error) || attempt === MAX_RETRIES - 1) {
-                if (error.message === 'VERSION_CONFLICT') {
-                    throw new Error('Could not complete transfer after multiple attempts — please retry');
-                }
-                throw error;
-            }
-
-            await randomJitter();
-
-        } finally {
-            session.endSession();
+        });
+    } catch (error) {
+        // CHANGE: this VERSION_CONFLICT -> friendlier-message translation used to live
+        // in transfer()'s own catch block, right next to its own retry loop. Now that
+        // the retry loop lives in withTransactionRetry, this translation happens on
+        // the way back out to the original caller instead.
+        if (error.message === 'VERSION_CONFLICT') {
+            throw new Error('Could not complete transfer after multiple attempts — please retry');
         }
+        throw error;
     }
 }
 
 export async function repayLoan({ loanId, amount, initiatedBy, idempotencyKey }) {
-    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-        const session = await mongoose.startSession();
-        try {
-            session.startTransaction();
-
+    try {
+        return await withTransactionRetry(async (session) => {
             const loan = await Loan.findById(loanId).populate('disbursementAccountId').session(session);
             if (!loan) {
                 const error = new Error('Loan not found');
@@ -420,7 +379,13 @@ export async function repayLoan({ loanId, amount, initiatedBy, idempotencyKey })
                 transactionId: idempotencyKey,
                 account: updatedAccount._id,
                 type: 'loan_repayment',
-                amount,
+                // CHANGE (from earlier review): this used to store the raw, unvalidated
+                // `amount` from the request instead of the parsed/normalized
+                // `paymentAmount` that the rest of this function actually operates on.
+                // That meant the transaction record could disagree with the ledger math
+                // that ran (different precision, no positive/decimal-place validation
+                // applied). Now stores the same value used everywhere else below.
+                amount: paymentAmount.toFixed(2),
                 balanceAfter: updatedAccount.balance,
                 status: 'completed',
                 description: `Loan repayment for loan ${loan._id}`,
@@ -457,22 +422,14 @@ export async function repayLoan({ loanId, amount, initiatedBy, idempotencyKey })
             }
             await loan.save({ session });
 
-            await session.commitTransaction();
             return { loan, account: updatedAccount, transaction: transaction[0] };
-
-        } catch (error) {
-            await session.abortTransaction();
-            if (!isRetryableError(error) || attempt === MAX_RETRIES - 1) {
-                if (error.message === 'VERSION_CONFLICT') {
-                    const conflictError = new Error('Could not complete repayment — please retry');
-                    conflictError.statusCode = 409;
-                    throw conflictError;
-                }
-                throw error;
-            }
-            await randomJitter();
-        } finally {
-            session.endSession();
+        });
+    } catch (error) {
+        if (error.message === 'VERSION_CONFLICT') {
+            const conflictError = new Error('Could not complete repayment — please retry');
+            conflictError.statusCode = 409;
+            throw conflictError;
         }
+        throw error;
     }
 }

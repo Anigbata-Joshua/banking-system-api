@@ -1,5 +1,4 @@
 import Account from '../models/account.model.js';
-import mongoose from 'mongoose';
 import Loan from '../models/loan.model.js';
 import catchAsync from '../utils/catchAsync.js';
 import * as ledgerService from '../services/ledger.service.js';
@@ -12,7 +11,7 @@ export const applyForLoan = catchAsync(async (req, res) => {
 
     const existingLoan = await Loan.findOne({
         customerId: req.user.customerId,
-        status: { $in: ['pending', 'active'] },
+        status: { $in: ['pending', 'recommended', 'active'] },
     });
 
     if (existingLoan) {
@@ -72,8 +71,13 @@ export const applyForLoan = catchAsync(async (req, res) => {
 
     await logAction(req.user.userId, 'APPLY_LOAN', { loanId: loan._id, principal }, req.ip);
 
-    res.status(201).json({ success: true, message: 'Loan request sent successfully', data: loan });
+    res.status(201).json({
+        success: true,
+        message: 'Loan request sent successfully',
+        data: loan
+    });
 });
+
 //Get Loans
 export const getLoans = catchAsync(async (req, res) => {
     const filter = req.user.role === 'customer'
@@ -108,7 +112,7 @@ export const recommendLoan = catchAsync(async (req, res) => {
         });
     }
 
-    loan.status = 'approved';
+    loan.status = 'recommended';
     loan.proposedBy = req.user.userId;
     loan.proposedAt = new Date();
     await loan.save();
@@ -143,7 +147,7 @@ export const approveLoan = catchAsync(async (req, res) => {
         });
     }
 
-    if (loan.status !== 'approved') {
+    if (loan.status !== 'recommended') {
         return res.status(400).json({
             success: false,
             message: `Cannot approve a loan with status '${loan.status}'`
@@ -172,12 +176,19 @@ export const approveLoan = catchAsync(async (req, res) => {
         };
     });
 
-    const session = await mongoose.startSession();
-    let disbursement;
-    try {
-        session.startTransaction();
-
-        disbursement = await ledgerService.deposit({
+    // ------------------------------------------------------------------
+    // CHANGE: this whole block previously ran inside a single, non-retried
+    // mongoose.startSession()/startTransaction() pair — the only step in the
+    // entire loan lifecycle with no protection against a transient write
+    // conflict (e.g. WriteConflict from concurrent writes touching the same
+    // disbursement account). Any such conflict meant the manager's approval
+    // failed outright and had to be manually resubmitted. Now it uses the
+    // same withTransactionRetry helper that deposit/withdraw/transfer/
+    // repayLoan already relied on, so this gets identical retry-with-jitter
+    // coverage instead of being the odd one out.
+    // ------------------------------------------------------------------
+    const { disbursement, updatedLoan } = await ledgerService.withTransactionRetry(async (session) => {
+        const disbursementResult = await ledgerService.deposit({
             accountNumber: loan.disbursementAccountId.accountNumber,
             amount: principal.toFixed(2),
             initiatedBy: req.user.userId,
@@ -192,24 +203,19 @@ export const approveLoan = catchAsync(async (req, res) => {
         loan.repaymentSchedule = repaymentSchedule;
         await loan.save({ session });
 
-        await session.commitTransaction();
-    } catch (error) {
-        await session.abortTransaction();
-        throw error;
-    } finally {
-        session.endSession();
-    }
+        return { disbursement: disbursementResult, updatedLoan: loan };
+    });
 
-    await logAction(req.user.userId, 'CONFIRM_LOAN_APPROVAL', { loanId: loan._id, principal: loan.principal, proposedBy: loan.proposedBy }, req.ip);
+    await logAction(req.user.userId, 'CONFIRM_LOAN_APPROVAL', { loanId: updatedLoan._id, principal: updatedLoan.principal, proposedBy: updatedLoan.proposedBy }, req.ip);
 
     res.status(200).json({
         success: true,
         message: 'Loan approved and disbursed',
-        data: { loan, disbursement }
+        data: { loan: updatedLoan, disbursement }
     });
 });
 
-//Repay loan
+//Reject loan
 export const rejectLoan = catchAsync(async (req, res) => {
     const { id } = req.params;
 
@@ -223,10 +229,10 @@ export const rejectLoan = catchAsync(async (req, res) => {
 
     // A loan can be rejected either before it's been recommended (pending) or
     // after a maker recommended it but before a checker confirmed it
-    // (approved). Rejecting is a stop-the-money action, not a money-movement
+    // (recommended). Rejecting is a stop-the-money action, not a money-movement
     // action, so — unlike confirmation — it doesn't require a different
     // person than whoever proposed it.
-    if (loan.status !== 'pending' && loan.status !== 'approved') {
+    if (loan.status !== 'pending' && loan.status !== 'recommended') {
         return res.status(400).json({
             success: false,
             message: `Cannot reject a loan with status '${loan.status}'`
@@ -242,6 +248,7 @@ export const rejectLoan = catchAsync(async (req, res) => {
     res.status(200).json({ success: true, message: 'Loan rejected', data: loan });
 });
 
+//Repay loan
 export const repayLoan = catchAsync(async (req, res) => {
     const { id } = req.params;
     const { amount } = req.body;

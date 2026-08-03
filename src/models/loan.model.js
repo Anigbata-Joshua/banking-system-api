@@ -16,7 +16,7 @@ const loanSchema = new mongoose.Schema(
         principal: { type: mongoose.Schema.Types.Decimal128, required: [true, 'Principal amount is required'] },
         interestRate: { type: mongoose.Schema.Types.Decimal128, required: [true, 'Interest rate is required'] },
         termMonths: { type: Number, required: [true, 'Loan term (months) is required'] },
-        status: { type: String, enum: ['pending', 'approved', 'rejected', 'active', 'closed', 'defaulted'], default: 'pending' },
+        status: { type: String, enum: ['pending', 'recommended', 'rejected', 'active', 'closed', 'defaulted'], default: 'pending' },
         // Maker-checker approval trail. `proposedBy` is the teller/manager who
         // recommended the loan (status moves pending -> approved). `approvedBy`
         // is the different manager/admin who confirmed it (status moves
