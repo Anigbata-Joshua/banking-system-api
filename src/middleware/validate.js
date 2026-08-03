@@ -69,18 +69,17 @@ export const registerSchema = z.object({
         email: z.string().email('Invalid email address').toLowerCase().trim(),
         password: z.string().min(6, 'Password must be at least 6 characters long'),
         phone: z.string().optional(),
-        dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date of birth must be YYYY-MM-DD').optional(),
-        address: z.union([
-            z.string(),
-            z.object({
-                street: z.string().min(1, 'Street is required'),
-                city: z.string().min(1, 'City is required'),
-                state: z.string().min(1, 'State is required'),
-                zipCode: z.string().min(1, 'Zip code is required'),
-                country: z.string().min(1, 'Country is required'),
-            })
-        ]).optional(),
-        nationalId: z.string().optional(),
+        // These three are required (not optional) and address must be the nested
+        // object shape, matching what the Customer model actually requires.
+        dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date of birth must be YYYY-MM-DD'),
+        address: z.object({
+            street: z.string().min(1, 'Street is required'),
+            city: z.string().min(1, 'City is required'),
+            state: z.string().min(1, 'State is required'),
+            zipCode: z.string().min(1, 'Zip code is required'),
+            country: z.string().min(1, 'Country is required'),
+        }),
+        nationalId: z.string().min(1, 'National ID is required'),
     }),
 });
 
@@ -153,5 +152,16 @@ export const addBeneficiarySchema = z.object({
         beneficiaryAccountNumber: z.string().regex(/^\d{10}$/, 'Beneficiary account number must be 10 digits'),
         beneficiaryName: z.string().min(1, 'Beneficiary name is required').trim(),
         nickname: z.string().optional(),
+    }),
+});
+
+export const issueCardSchema = z.object({
+    body: z.object({
+        accountId: z.string().min(1, 'Account ID is required'),
+        cardType: z.enum(['debit', 'credit'], {
+            errorMap: () => ({ message: "Card type must be 'debit' or 'credit'" }),
+        }),
+        pin: z.string().regex(/^\d{4}$/, 'PIN must be exactly 4 digits'), // Card PINs are exactly 4 digits
+
     }),
 });

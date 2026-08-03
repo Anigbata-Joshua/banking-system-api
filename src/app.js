@@ -46,7 +46,6 @@ app.use('/api/audit-logs', auditLogRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/customers', customerRoutes);
 
-// Not yet mounted — waiting on auth.routes.js
 const authLimiter = rateLimit({
     windowMs: 900000,
     max: 20,
