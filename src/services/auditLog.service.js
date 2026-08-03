@@ -1,12 +1,6 @@
 import AuditLog from '../models/auditLog.model.js';
 
-/**
- * Log a user action or system event.
- * @param {string|null} userId - The user ID associated with the event
- * @param {string} action - The action type
- * @param {any} details - Additional context
- * @param {string} [ipAddress] - IP address of the client
- */
+// Logs a user action or system event. userId falls back to null if not provided.
 export async function logAction(userId, action, details, ipAddress = '') {
     try {
         await AuditLog.create({
